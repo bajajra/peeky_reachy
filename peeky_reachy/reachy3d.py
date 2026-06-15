@@ -433,14 +433,43 @@ window.peekyReachy = window.peekyReachy || {};
     }, R.pollMs);
   };
 
+  R._loadScript = function (src, cb) {
+    // Inject a CDN script tag dynamically. We can't put <script src=...>
+    // directly in the Gradio head argument (Gradio 6.18 escapes them into
+    // the gradio_config JSON), so we add them from the inline scene script
+    // the first time R.boot is called.
+    if (R._loadedScripts[src]) { cb(); return; }
+    R._loadedScripts[src] = true;
+    var s = document.createElement("script");
+    s.src = src; s.async = false;
+    s.onload = function () { cb(); };
+    s.onerror = function () { console.warn("[peeky-reachy] failed to load", src); cb(); };
+    (document.head || document.documentElement).appendChild(s);
+  };
+  R._loadedScripts = {};
+
   R.boot = function () {
+    if (document.getElementById("__CANVAS_ID__") && R._ready) return;
     var haveThree = !!window.THREE;
     var needLoader = (R.loaderMode === "urdf");
     var haveLoader = !needLoader || !!(window.URDFLoader && window.URDFLoader.URDFLoader);
-    if (haveThree && haveLoader && document.getElementById("__CANVAS_ID__")) {
-      R._init();
-    } else {
+    if (haveThree && haveLoader) {
+      if (document.getElementById("__CANVAS_ID__")) R._init();
+      else setTimeout(R.boot, 120);
+      return;
+    }
+    // Load whatever's missing (in order: three first, then urdf-loader if needed).
+    var loadNext = function () {
+      if (!haveLoader && needLoader) {
+        R._loadScript("__URDF_LOADER_CDN__", function () { setTimeout(R.boot, 30); });
+        return;
+      }
       setTimeout(R.boot, 120);
+    };
+    if (!haveThree) {
+      R._loadScript("__THREE_CDN__", loadNext);
+    } else {
+      loadNext();
     }
   };
 })(window.peekyReachy);
@@ -481,15 +510,15 @@ def head_html(states: Optional[dict] = None,
         .replace("__CANVAS_ID__", CANVAS_ELEM_ID)
         .replace("__STATE_ID__", STATE_ELEM_ID)
         .replace("__STATUS_ID__", STATUS_ELEM_ID)
+        .replace("__THREE_CDN__", _THREE_CDN)
+        .replace("__URDF_LOADER_CDN__", _URDF_LOADER_CDN)
     )
-    loader_tag = (
-        f'<script src="{_URDF_LOADER_CDN}"></script>\n' if mode == "urdf" else ""
-    )
-    return (
-        f'<script src="{_THREE_CDN}"></script>\n'
-        f"{loader_tag}"
-        f"<script>\n{scene}\nwindow.peekyReachy.boot();\n</script>"
-    )
+    # Note: we deliberately do NOT emit <script src=...> tags for three.js /
+    # urdf-loader here. Gradio 6.18 escapes anything we pass via the `head=`
+    # launch kwarg into a JSON config blob, which strips external script tags.
+    # Instead, R._loadScript injects them dynamically from the inline scene
+    # script when R.boot() runs. See `R.boot` / `R._loadScript` in _SCENE_JS.
+    return f"<script>\n{scene}\nwindow.peekyReachy.boot();\n</script>"
 
 
 # Re-run boot after Gradio mounts the DOM (idempotent; _init guards on _ready).

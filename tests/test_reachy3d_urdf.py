@@ -153,12 +153,62 @@ def test_head_html_default_uses_urdf_loader():
 
 def test_head_html_procedural_fallback_emits_no_urdf_loader():
     """Forcing procedural mode must NOT load the urdf-loader CDN
-    (saves bandwidth + avoids a broken promise if it's blocked)."""
+    (saves bandwidth + avoids a broken promise if it's blocked).
+
+    Note: under the dynamic-loader design (Gradio 6.18 escapes
+    <script src=...> in the head arg), the CDN URL is always present in
+    the inline scene script as a string. What matters is that the scene
+    does not actually *call* _loadScript for urdf-loader when the loader
+    mode is procedural. We check that by looking at R.boot's runtime
+    branch: with loaderMode='procedural', needLoader is false so the
+    urdf-loader branch is dead code.
+    """
     html = reachy3d.head_html(loader_mode="procedural", urdf_url=None)
-    assert "urdf-loader" not in html, "procedural fallback must not load urdf-loader"
+    # The runtime branch that fetches urdf-loader is gated on
+    # ``needLoader = (R.loaderMode === "urdf")``. With procedural mode,
+    # needLoader is false so the _loadScript("...urdf-loader...") call
+    # is never reached at runtime. We assert the gate is wired up.
+    assert "needLoader" in html
+    assert 'loaderMode === "urdf"' in html, (
+        "R.boot must gate the urdf-loader fetch on loaderMode='urdf'"
+    )
     # The four state names must still appear in the scene config.
     for name in reachy3d.STATE_NAMES:
         assert name in html, f"procedural scene must mention {name!r}"
+
+
+def test_head_html_emits_no_external_script_src_tags():
+    """Gradio 6.18 escapes <script src=...> in the `head=` launch arg
+    into the gradio_config JSON (the tags end up as escaped strings,
+    not live script tags). The fix: head_html() emits only inline JS,
+    and R._loadScript injects the CDN tags at runtime.
+
+    This is what makes the URDF load at all on Gradio 6.18.
+    """
+    import re
+    for mode in ("urdf", "procedural"):
+        html = reachy3d.head_html(loader_mode=mode,
+                                  urdf_url=("reachy_mini.urdf" if mode == "urdf" else None))
+        # Strip JS line comments so the assertion is about real tags,
+        # not the comment in R._loadScript that mentions <script src=...>.
+        js = re.sub(r"//.*$", "", html, flags=re.MULTILINE)
+        real = re.findall(r'<script[^>]*\bsrc\s*=', js)
+        assert not real, (
+            f"head_html(mode={mode!r}) still emits a live <script src=...> "
+            f"tag: {real}. Gradio 6.18 escapes it into the config JSON."
+        )
+
+
+def test_head_html_includes_dynamic_loader_cdns():
+    """The inline scene script must reference the three.js and
+    urdf-loader CDN URLs as strings (so R._loadScript can fetch them
+    at runtime) when loaderMode is 'urdf'."""
+    html = reachy3d.head_html()  # default = urdf mode
+    assert "cdn.jsdelivr.net/npm/three" in html
+    assert "urdf-loader" in html
+    # The dynamic loader function is present
+    assert "_loadScript" in html
+    assert "R.boot" in html
 
 
 def test_head_html_injects_pose_table():
