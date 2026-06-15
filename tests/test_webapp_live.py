@@ -124,6 +124,67 @@ def test_live_monitor_start_handles_mic_failure(monkeypatch):
     assert mon.session is None
 
 
+# -------------------- WAV-as-live-source (no-mic devices) --------------------
+
+
+def test_live_monitor_replay_wav_streams_into_pipeline(tmp_path, monkeypatch):
+    """Replay mode lets a no-mic device feed the StreamingSession from a file."""
+    import soundfile as sf
+    from tests.conftest import SR, baby_cry
+
+    wav = tmp_path / "cry.wav"
+    sf.write(str(wav), baby_cry(2.0), SR)
+    # No mic patching needed — the WAV path never touches LocalAudioIO.
+    mon = _LiveMonitor()
+    monkeypatch.setattr("peeky_reachy.webapp._LIVE", mon)
+    cfg = Config.from_env()
+    msg = mon.start(cfg, voice_client=None, wav_path=str(wav), loop=False)
+    assert "Listening on" in msg and "cry.wav" in msg
+    assert mon.is_active() is True
+    assert mon.wav_source is not None and mon.mic is None
+    # The feeder blocks one frame per read; with 2.0s of audio and
+    # 96 ms frames (1536/16k), the buffer fills quickly. The WAV source
+    # tracks how many seconds it has emitted.
+    deadline = time.monotonic() + 4.0
+    while time.monotonic() < deadline and mon.wav_source.fed_seconds < 0.3:
+        time.sleep(0.05)
+    assert mon.wav_source.fed_seconds > 0.0, (
+        f"replay feeder didn't advance; fed_seconds={mon.wav_source.fed_seconds}")
+    mon.stop()
+    assert mon.is_active() is False
+
+
+def test_live_monitor_replay_wav_missing_file_returns_error(monkeypatch):
+    mon = _LiveMonitor()
+    monkeypatch.setattr("peeky_reachy.webapp._LIVE", mon)
+    cfg = Config.from_env()
+    msg = mon.start(cfg, wav_path="/no/such/file.wav")
+    assert "Failed to open WAV file" in msg
+    assert mon.is_active() is False
+    assert mon.wav_source is None
+    assert mon.session is None
+
+
+def test_live_monitor_wav_source_keeps_replaying_when_loop_true(monkeypatch, tmp_path):
+    """Loop=True must keep feeding after a single pass through the file."""
+    import soundfile as sf
+    from tests.conftest import SR, silence
+
+    wav = tmp_path / "silence_loop.wav"
+    sf.write(str(wav), silence(0.5), SR)
+    mon = _LiveMonitor()
+    monkeypatch.setattr("peeky_reachy.webapp._LIVE", mon)
+    cfg = Config.from_env()
+    mon.start(cfg, wav_path=str(wav), loop=True)
+    # 1.0s of wall time on a 0.5s file with loop=True must emit >= 1.5s
+    deadline = time.monotonic() + 3.0
+    while time.monotonic() < deadline and mon.wav_source.fed_seconds < 1.5:
+        time.sleep(0.05)
+    assert mon.wav_source.fed_seconds >= 1.5, (
+        f"loop didn't replay; fed_seconds={mon.wav_source.fed_seconds}")
+    mon.stop()
+
+
 # -------------------- _live_poll shape --------------------
 
 
@@ -249,7 +310,27 @@ def test_start_live_returns_status_message(monkeypatch):
     mic = _FakeMic(frames=8)
     _patch_live_monitor(monkeypatch, mic)
     try:
-        msg = _start_live(0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "")
+        msg = _start_live(0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "",
+                          "mic", None, True)
         assert "Listening" in msg or "🔴" in msg
+    finally:
+        _stop_live()
+
+
+def test_start_live_routes_wav_source(monkeypatch, tmp_path):
+    """`_start_live` with source='wav' should drive the WAV replay path."""
+    import soundfile as sf
+    from tests.conftest import SR, silence
+
+    wav = tmp_path / "x.wav"
+    sf.write(str(wav), silence(0.3), SR)
+    fresh = _LiveMonitor()
+    monkeypatch.setattr("peeky_reachy.webapp._LIVE", fresh)
+    try:
+        msg = _start_live(0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "",
+                          "wav", str(wav), True)
+        assert "Listening on" in msg
+        assert "x.wav" in msg
+        assert fresh.wav_source is not None and fresh.mic is None
     finally:
         _stop_live()

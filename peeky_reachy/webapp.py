@@ -13,12 +13,13 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
 
 from . import reachy3d
-from .audio.io import ArrayAudioIO, LocalAudioIO
+from .audio.io import ArrayAudioIO, LocalAudioIO, resample_linear, to_mono
 from .config import Config
 from .detect.events import SoundEvent
 from .pipeline import Pipeline
@@ -81,6 +82,60 @@ def _config_from_ui(cry_thr, sustain, cooldown, min_snr, smoothing, vad_thr,
 # --------------------------------------------------------------------------
 
 
+class _WavReplaySource:
+    """File-backed live source: streams a WAV file into the StreamingSession
+    at real-time pace, optionally looping. Lets users without a microphone
+    experience the live monitor (rolling timeline, 3D Reachy reacts, auto-
+    soothe on a sustained cry) by sourcing from a file.
+    """
+
+    def __init__(self, path: str, sample_rate: int, frame_size: int,
+                 loop: bool = True) -> None:
+        import soundfile as sf
+
+        data, src_sr = sf.read(str(path), dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        self._samples = resample_linear(data.astype(np.float32),
+                                        int(src_sr), int(sample_rate))
+        self.sample_rate = int(sample_rate)
+        self.frame_size = int(frame_size)
+        self.loop = bool(loop)
+        self._closed = False
+        # Track total samples emitted (for UI status text).
+        self.fed_seconds = 0.0
+
+    def start(self) -> None:
+        self._closed = False
+
+    def stop(self) -> None:
+        self._closed = True
+
+    def read(self) -> Optional[np.ndarray]:
+        """Returns the next frame at real-time pace, looping if enabled.
+
+        Blocks for the duration of one frame so the source behaves like a
+        real microphone.
+        """
+        if self._closed or self._samples.size == 0:
+            return None
+        cursor = getattr(self, "_cursor", 0)
+        end = self._samples.size
+        if cursor >= end:
+            if not self.loop:
+                return None
+            cursor = 0
+        frame = np.zeros(self.frame_size, dtype=np.float32)
+        take = min(self.frame_size, end - cursor)
+        frame[:take] = self._samples[cursor:cursor + take]
+        cursor += take
+        self._cursor = cursor
+        self.fed_seconds += self.frame_size / float(self.sample_rate)
+        # Real-time pacing: block for one frame's worth of audio.
+        time.sleep(self.frame_size / float(self.sample_rate))
+        return frame
+
+
 class _LiveMonitor:
     """Owns the StreamingSession + LocalAudioIO mic for the Live monitor tab.
 
@@ -92,50 +147,84 @@ class _LiveMonitor:
         self._lock = threading.Lock()
         self.session: Optional[StreamingSession] = None
         self.mic: Optional[LocalAudioIO] = None
+        self.wav_source: Optional[_WavReplaySource] = None
         self.feeder_thread: Optional[threading.Thread] = None
         self.feeder_stop: Optional[threading.Event] = None
         self.error: Optional[str] = None
+        self.source_label: str = ""
 
     def is_active(self) -> bool:
         return self.session is not None and self.session.running
 
-    def start(self, cfg: Config, voice_client=None) -> str:
+    def start(self, cfg: Config, voice_client=None, *,
+              wav_path: Optional[str] = None, loop: bool = True) -> str:
+        """Start live monitoring. Source is the laptop mic by default; if
+        ``wav_path`` is set, the file is replayed in real time (looped when
+        ``loop`` is True) so users without a microphone can drive the live
+        experience from a file."""
         if self.is_active():
             return "🔴 Already monitoring (click Stop first)."
         self._reset_state()
-        try:
-            self.mic = LocalAudioIO(cfg.sample_rate, cfg.frame_size)
-            self.mic.start()
-        except Exception as exc:
-            self.mic = None
-            return (
-                f"❌ Failed to open microphone: {exc}\n\n"
-                "On macOS, grant Microphone permission to your terminal/Gradio "
-                "process (System Settings → Privacy & Security → Microphone). "
-                "Then click Start again."
-            )
+        if wav_path:
+            try:
+                self.wav_source = _WavReplaySource(wav_path, cfg.sample_rate,
+                                                   cfg.frame_size, loop=loop)
+                self.wav_source.start()
+                self.source_label = f"file: {Path(wav_path).name} (loop)" if loop \
+                    else f"file: {Path(wav_path).name}"
+            except Exception as exc:
+                self.wav_source = None
+                return (
+                    f"❌ Failed to open WAV file: {exc}\n\n"
+                    "Make sure the path points to a readable .wav file. "
+                    "Then click Start again."
+                )
+        else:
+            try:
+                self.mic = LocalAudioIO(cfg.sample_rate, cfg.frame_size)
+                self.mic.start()
+                self.source_label = "laptop microphone"
+            except Exception as exc:
+                self.mic = None
+                return (
+                    f"❌ Failed to open microphone: {exc}\n\n"
+                    "On macOS, grant Microphone permission to your terminal/Gradio "
+                    "process (System Settings → Privacy & Security → Microphone). "
+                    "**No mic?** Pick the **Replay WAV as live source** option "
+                    "and feed a file instead. Then click Start again."
+                )
         qio = _QueueAudioIO(sample_rate=cfg.sample_rate, frame_size=cfg.frame_size)
         self.session = StreamingSession(cfg, voice_client=voice_client, audio_io=qio)
         self.session.start()
         self.feeder_stop = threading.Event()
+        thread_name = "peeky-wav-feeder" if self.wav_source else "peeky-mic-feeder"
         self.feeder_thread = threading.Thread(
-            target=self._feed_loop, name="peeky-mic-feeder", daemon=True)
+            target=self._feed_loop, name=thread_name, daemon=True)
         self.feeder_thread.start()
-        return "🔴 Listening — speak or play a cry clip. Peeky soothes on a sustained cry."
+        return (f"🔴 Listening on {self.source_label}. "
+                "Peeky soothes on a sustained cry.")
 
     def _feed_loop(self) -> None:
-        assert self.mic is not None
+        if self.mic is None and self.wav_source is None:
+            return
+        src = self.wav_source if self.wav_source is not None else self.mic
+        src_label = "wav" if self.wav_source is not None else "mic"
         try:
             while self.feeder_stop is not None and not self.feeder_stop.is_set():
-                frame = self.mic.read()
+                frame = src.read()
                 if frame is None or frame.size == 0:
+                    if self.wav_source is not None and not self.wav_source.loop:
+                        # Single-shot replay ended; stop the session cleanly.
+                        with self._lock:
+                            self.error = "WAV replay finished (loop was off)"
+                        break
                     continue
                 if self.session is not None:
-                    self.session.feed(frame, self.mic.sample_rate)
+                    self.session.feed(frame, src.sample_rate)
         except Exception as exc:
             with self._lock:
                 self.error = str(exc)
-            log.exception("mic feeder crashed")
+            log.exception("%s feeder crashed", src_label)
 
     def stop(self) -> str:
         if not self.is_active() and self.session is None:
@@ -156,6 +245,12 @@ class _LiveMonitor:
             except Exception:
                 pass
             self.mic = None
+        if self.wav_source is not None:
+            try:
+                self.wav_source.stop()
+            except Exception:
+                pass
+            self.wav_source = None
         return f"🟢 Stopped. {count} soothe event(s) this session."
 
     def snapshot(self):
@@ -180,6 +275,8 @@ class _LiveMonitor:
             self.feeder_thread = None
             self.session = None
             self.mic = None
+            self.wav_source = None
+            self.source_label = ""
 
 
 _LIVE = _LiveMonitor()
@@ -191,14 +288,22 @@ _LIVE = _LiveMonitor()
 
 
 def _start_live(cry_thr, sustain, cooldown, min_snr, smoothing, vad_thr,
-                reason, use_voice, voice_url):
+                reason, use_voice, voice_url, source, wav_audio, wav_loop):
     cfg = _config_from_ui(cry_thr, sustain, cooldown, min_snr, smoothing, vad_thr,
                           reason, voice_url)
     voice = None
     if use_voice:
         store = EnrollmentStore(cfg.enrollment_dir)
         voice = VoiceCloneClient(cfg.voice_clone_url, store, cfg.voice_clone_timeout_s)
-    return _LIVE.start(cfg, voice_client=voice)
+    wav_path = None
+    if source == "wav" and wav_audio is not None:
+        # gradio's gr.Audio(type="filepath") returns a path; older
+        # numpy audio returns a tuple. Handle both.
+        if isinstance(wav_audio, str):
+            wav_path = wav_audio
+        elif isinstance(wav_audio, dict) and "path" in wav_audio:
+            wav_path = wav_audio["path"]
+    return _LIVE.start(cfg, voice_client=voice, wav_path=wav_path, loop=bool(wav_loop))
 
 
 def _stop_live():
@@ -408,6 +513,18 @@ def build_app():
                     with gr.Row():
                         start_btn = gr.Button("Start monitoring", variant="primary")
                         stop_btn = gr.Button("Stop")
+                    with gr.Accordion("Source", open=True):
+                        source = gr.Radio(
+                            choices=[("Laptop microphone", "mic"),
+                                     ("Replay WAV as live source (no mic needed)",
+                                      "wav")],
+                            value="mic", label="Live audio source")
+                        wav_audio = gr.Audio(
+                            sources=["upload"],
+                            type="filepath",
+                            label="WAV file to replay (when source = WAV)")
+                        wav_loop = gr.Checkbox(value=True,
+                                               label="Loop the file continuously")
                     with gr.Accordion("Detection settings", open=False):
                         (cry_thr_l, sustain_l, cooldown_l, min_snr_l, smoothing_l,
                          vad_thr_l, reason_l, use_voice_l, voice_url_l) = _settings_block()
@@ -424,7 +541,7 @@ def build_app():
                         _start_live,
                         inputs=[cry_thr_l, sustain_l, cooldown_l, min_snr_l,
                                 smoothing_l, vad_thr_l, reason_l, use_voice_l,
-                                voice_url_l],
+                                voice_url_l, source, wav_audio, wav_loop],
                         outputs=[live_status])
                     stop_btn.click(_stop_live, outputs=[live_status])
 
