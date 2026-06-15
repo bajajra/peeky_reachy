@@ -123,7 +123,67 @@ def test_enroll_handles_bare_ndarray_payload():
 def test_enroll_no_audio_returns_clear_message():
     status, _ = enroll(None, name="NoAudio", transcript="hush now little one",
                        language="en", consent=True)
-    assert "record or upload" in status.lower(), status
+    assert "couldn't read the audio" in status.lower(), status
+    assert "afconvert" in status.lower() or "wav" in status.lower(), status
+
+
+# -------------------- M4A / AAC decode via macOS afconvert --------------------
+
+
+def test_decode_audio_path_handles_m4a_via_afconvert(tmp_path):
+    """M4A is the iPhone Voice Memo format; soundfile can't read it directly.
+    On macOS we fall back to the built-in `afconvert` → temp WAV → soundfile,
+    no system install required. We synthesize an M4A from a soundfile-readable
+    WAV via afconvert itself (it's the only M4A writer we can assume is
+    present on macOS test machines)."""
+    import shutil
+    import subprocess
+    import soundfile as sf
+
+    if shutil.which("afconvert") is None:
+        pytest.skip("afconvert not on PATH (non-macOS test env)")
+
+    src_wav = tmp_path / "src.wav"
+    sf.write(str(src_wav), 0.1 * __import__('numpy').random.default_rng(0)
+             .standard_normal(16000 * 2).astype('float32'), 16000)
+    m4a = tmp_path / "voice.m4a"
+    subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", str(src_wav), str(m4a)],
+                   check=True, capture_output=True)
+    from peeky_reachy.webapp import _decode_audio_path
+    data, sr = _decode_audio_path(m4a)
+    assert data is not None, "afconvert fallback should have decoded the M4A"
+    assert sr > 0
+    assert data.ndim == 1
+    assert data.dtype.name == "float32"
+
+
+def test_decode_audio_path_returns_none_for_unreadable():
+    from peeky_reachy.webapp import _decode_audio_path
+    data, sr = _decode_audio_path("/no/such/file.xyz")
+    assert data is None and sr == 16000
+
+
+def test_enroll_handles_m4a_via_afconvert(tmp_path):
+    """End-to-end: an M4A uploaded to the Enroll tab must succeed (regression
+    for the user-reported `dad_enroll.m4a` failure)."""
+    import shutil
+    import subprocess
+    import soundfile as sf
+    import numpy as np
+
+    if shutil.which("afconvert") is None:
+        pytest.skip("afconvert not on PATH (non-macOS test env)")
+
+    src_wav = tmp_path / "src.wav"
+    sf.write(str(src_wav), 0.05 * np.random.default_rng(0)
+             .standard_normal(16000 * 2).astype('float32'), 16000)
+    m4a = tmp_path / "dad.m4a"
+    subprocess.run(["afconvert", "-f", "m4af", "-d", "aac", str(src_wav), str(m4a)],
+                   check=True, capture_output=True)
+    status, rows = enroll(str(m4a), name="Dad E2E", transcript="hush now little one",
+                          language="en", consent=True)
+    assert "✅" in status, status
+    assert any(r[0] == "dad-e2e" for r in rows), rows
 
 
 # -------------------- analyze edge cases --------------------

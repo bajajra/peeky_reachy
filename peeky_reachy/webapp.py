@@ -64,17 +64,13 @@ def _to_float_mono(audio) -> tuple[Optional[np.ndarray], int]:
         path = audio.get("path")
         if not path:
             return None, 16000
-        try:
-            import soundfile as sf
-            data, sr = sf.read(str(path), dtype="float32", always_2d=False)
-        except Exception:
+        data, sr = _decode_audio_path(path)
+        if data is None:
             return None, 16000
     # (c) path string
     elif isinstance(audio, (str, Path)):
-        try:
-            import soundfile as sf
-            data, sr = sf.read(str(audio), dtype="float32", always_2d=False)
-        except Exception:
+        data, sr = _decode_audio_path(audio)
+        if data is None:
             return None, 16000
     # (d) bare ndarray — assume 16 kHz (matches the pipeline default)
     elif isinstance(audio, np.ndarray):
@@ -89,6 +85,74 @@ def _to_float_mono(audio) -> tuple[Optional[np.ndarray], int]:
     if data.ndim == 2:
         data = data.mean(axis=1)
     return data, int(sr)
+
+
+def _decode_audio_path(path) -> tuple[Optional[np.ndarray], int]:
+    """Decode any audio file path to ``(float32 ndarray, sr)``.
+
+    Tries in order:
+    1. ``soundfile`` (handles WAV, FLAC, OGG, AIFF natively — no system deps).
+    2. macOS built-in ``afconvert`` → temp WAV → soundfile (handles M4A/AAC
+       on macOS, no install needed; ``afconvert`` ships with every macOS).
+    3. ``ffmpeg`` via subprocess → temp WAV → soundfile (handles MP3 and
+       anything else; only used if ffmpeg is on PATH).
+
+    Returns ``(None, 16000)`` if every path fails — caller should surface a
+    clear "convert to WAV first" message.
+    """
+    import os
+    import shutil
+    import subprocess
+    import tempfile
+    import soundfile as sf
+
+    p = str(path)
+    # 1) soundfile native
+    try:
+        data, sr = sf.read(p, dtype="float32", always_2d=False)
+        return data, int(sr)
+    except Exception:
+        pass
+    # 2) macOS afconvert (built-in, no install) → temp WAV → soundfile
+    if shutil.which("afconvert") is not None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                # afconvert to linear PCM 16-bit interleaved little-endian
+                # -d LEI16 → 16-bit PCM; -f WAVE → WAV container
+                subprocess.run(
+                    ["afconvert", "-f", "WAVE", "-d", "LEI16", p, tmp_path],
+                    check=True, capture_output=True, timeout=30)
+                data, sr = sf.read(tmp_path, dtype="float32", always_2d=False)
+                return data, int(sr)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    # 3) ffmpeg (handles MP3 and friends) → temp WAV → soundfile
+    if shutil.which("ffmpeg") is not None:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                subprocess.run(
+                    ["ffmpeg", "-y", "-i", p, "-ar", "16000", "-ac", "1",
+                     "-f", "wav", tmp_path],
+                    check=True, capture_output=True, timeout=30)
+                data, sr = sf.read(tmp_path, dtype="float32", always_2d=False)
+                return data, int(sr)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+    return None, 16000
 
 
 def _to_gradio_audio(samples: np.ndarray, sr: int) -> tuple[int, np.ndarray]:
@@ -445,8 +509,15 @@ def enroll(audio, name, transcript, language, consent):
         return f"Consent required to enroll a voice.\n\n{CONSENT_TEXT}", _enrolled_rows()
     samples, sr = _to_float_mono(audio)
     if samples is None or len(samples) == 0:
-        return ("Please record or upload a voice sample (WAV/MP3/OGG), then "
-                "click **Enroll voice**."), _enrolled_rows()
+        return ("❌ Couldn't read the audio.\n\n"
+                "I tried soundfile (WAV/FLAC/OGG/AIFF), the macOS built-in "
+                "``afconvert`` (M4A/AAC), and ffmpeg if present. None worked.\n\n"
+                "**Quickest fix on macOS:**\n"
+                "1. Open the file in QuickTime Player → *File* → *Export As* → *Audio Only* → **WAV**\n"
+                "2. Or run `afconvert -f WAVE -d LEI16 dad_enroll.m4a dad_enroll.wav` in Terminal\n"
+                "3. Upload the resulting `.wav` here.\n\n"
+                "If you want MP3/etc support without manual conversion, "
+                "`brew install ffmpeg` and restart this Gradio app."), _enrolled_rows()
     if not (name and transcript.strip()):
         return "Name and an exact transcript of the sample are both required.", _enrolled_rows()
     cfg = Config.from_env()
