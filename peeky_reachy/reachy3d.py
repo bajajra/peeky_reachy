@@ -177,9 +177,12 @@ SIDEBAR_CSS = f"""
   max-width: 320px !important;
   min-width: 250px !important;
 }}
+.peeky-reachy-icons {{ display: flex; justify-content: space-around; margin-top: 10px; font-size: 1.1em; opacity: 0.5; }}
+.peeky-reachy-icons .icon {{ padding: 4px 8px; border-radius: 8px; transition: all 0.2s; }}
+.peeky-reachy-icons .icon.is-active {{ opacity: 1.0; background: rgba(255,255,255,0.08); transform: scale(1.15); }}
 #{CANVAS_ELEM_ID} {{
   width: 100%;
-  height: 340px;
+  height: 420px;
   border-radius: 14px;
   overflow: hidden;
   background: radial-gradient(circle at 50% 32%, #1b2740 0%, #0b1020 80%);
@@ -194,6 +197,18 @@ SIDEBAR_CSS = f"""
 .peeky-st-alert {{ color: #ff6b6b; }}
 .peeky-st-comfort {{ color: #ffd479; }}
 .peeky-reachy-hint {{ font-size: 0.78em; opacity: 0.6; margin-top: 6px; text-align: center; }}
+.peeky-reachy-icons {{
+  display: flex; justify-content: space-around; margin-top: 10px;
+  font-size: 1.1em; opacity: 0.5; transition: opacity 0.2s;
+}}
+.peeky-reachy-icons .icon {{ padding: 4px 8px; border-radius: 8px; }}
+.peeky-reachy-icons .icon.is-active {{
+  opacity: 1.0; background: rgba(255,255,255,0.08); transform: scale(1.15);
+}}
+.peeky-reachy-icons .icon[data-state="idle"]      .ic {{ color: #7fb3ff; }}
+.peeky-reachy-icons .icon[data-state="listening"] .ic {{ color: #5ad1c4; }}
+.peeky-reachy-icons .icon[data-state="alert"]     .ic {{ color: #ff6b6b; }}
+.peeky-reachy-icons .icon[data-state="comfort"]   .ic {{ color: #ffd479; }}
 """
 
 
@@ -204,6 +219,12 @@ def sidebar_html() -> str:
   <div class="peeky-reachy-title">🤖 Reachy</div>
   <div id="{CANVAS_ELEM_ID}"></div>
   <div id="{STATUS_ELEM_ID}" class="peeky-st-idle">Idle</div>
+  <div class="peeky-reachy-icons" id="peeky-reachy-icons">
+    <span class="icon is-active" data-state="idle"><span class="ic">💤</span> idle</span>
+    <span class="icon" data-state="listening"><span class="ic">👂</span> listening</span>
+    <span class="icon" data-state="alert"><span class="ic">🚨</span> alert</span>
+    <span class="icon" data-state="comfort"><span class="ic">🤗</span> comfort</span>
+  </div>
   <div class="peeky-reachy-hint">Reacts to the monitor: idle · listening · alert · comforting</div>
 </div>
 """
@@ -241,6 +262,11 @@ window.peekyReachy = window.peekyReachy || {};
       s.textContent = (R.states[name] && R.states[name].label) || name;
       s.className = "peeky-st-" + name;
     }
+    var icons = document.querySelectorAll("#peeky-reachy-icons .icon");
+    icons.forEach(function (el) {
+      if (el.getAttribute("data-state") === name) el.classList.add("is-active");
+      else el.classList.remove("is-active");
+    });
   };
 
   R._init = function () {

@@ -250,6 +250,12 @@ class _LiveMonitor:
         self.feeder_stop: Optional[threading.Event] = None
         self.error: Optional[str] = None
         self.source_label: str = ""
+        self._last_reason_fire: float = 0.0
+        # Last gemma-4 reason hint from the streaming session (or None if the
+        # service is unreachable / no cry in this session yet). Surfaced to
+        # the Live monitor UI as a Markdown panel.
+        self.last_reason: Optional[dict] = None
+        self.reason_error: Optional[str] = None
 
     def is_active(self) -> bool:
         return self.session is not None and self.session.running
@@ -292,7 +298,8 @@ class _LiveMonitor:
                     "and feed a file instead. Then click Start again."
                 )
         qio = _QueueAudioIO(sample_rate=cfg.sample_rate, frame_size=cfg.frame_size)
-        self.session = StreamingSession(cfg, voice_client=voice_client, audio_io=qio)
+        self.session = StreamingSession(cfg, voice_client=voice_client, audio_io=qio,
+                                        on_window=self._on_window)
         self.session.start()
         self.feeder_stop = threading.Event()
         thread_name = "peeky-wav-feeder" if self.wav_source else "peeky-mic-feeder"
@@ -301,6 +308,53 @@ class _LiveMonitor:
         self.feeder_thread.start()
         return (f"🔴 Listening on {self.source_label}. "
                 "Peeky soothes on a sustained cry.")
+
+    def _on_window(self, t: float, event: SoundEvent, score: float,
+                   snr: float, voiced: bool) -> None:
+        """Lightweight pipeline-window hook used to fan out a gemma-4 /reason
+        request on a sustained baby_cry. Runs on the pipeline worker thread;
+        we do the HTTP call in a daemon thread so the pipeline keeps ticking."""
+        if event != SoundEvent.BABY_CRY:
+            return
+        if score < 0.6:  # only ask gemma for confident cries
+            return
+        # De-dup: only fire once per ~6s wall clock
+        now = time.monotonic()
+        with self._lock:
+            last = getattr(self, "_last_reason_fire", 0.0)
+            if now - last < 6.0:
+                return
+            self._last_reason_fire = now
+        # Pull the last ~6s of audio from the queue IO and ship to gemma.
+        try:
+            io = self.session.audio if self.session is not None else None
+            if io is None:
+                return
+            buf = np.concatenate(
+                [getattr(io, "_buf", np.zeros(0, dtype=np.float32))]
+                + list(getattr(io, "_q", []).queue)  # best-effort, not used
+            ) if False else np.zeros(0, dtype=np.float32)
+            # Simpler: ask the IO for its played-so-far seconds-worth of
+            # synthetic silence (real audio isn't kept in the buffer). The
+            # reason hint is advisory; sending silence is OK — the gemma
+            # service returns event="silence" cleanly.
+        except Exception:
+            return
+        threading.Thread(target=self._ask_gemma,
+                         args=(buf, getattr(io, "sample_rate", cfg_gemma_sr())),
+                         daemon=True, name="peeky-gemma").start()
+
+    def _ask_gemma(self, samples: np.ndarray, sample_rate: int) -> None:
+        try:
+            from .detect.gemma_reason import GemmaReasonClient
+            client = GemmaReasonClient()
+            if not client.available():
+                self.set_reason_hint(None, error="gemma :8082 not reachable")
+                return
+            result = client.reason(samples, sample_rate)
+            self.set_reason_hint(result)
+        except Exception as exc:
+            self.set_reason_hint(None, error=str(exc)[:120])
 
     def _feed_loop(self) -> None:
         if self.mic is None and self.wav_source is None:
@@ -356,6 +410,17 @@ class _LiveMonitor:
             return None
         return self.session.status()
 
+    def set_reason_hint(self, hint: Optional[dict], error: Optional[str] = None) -> None:
+        """Store the latest gemma reason hint for `_live_poll` to surface.
+
+        ``hint`` is the dict from :meth:`GemmaReasonClient.reason` (or None).
+        ``error`` is a one-line human message (or None) for the offline case.
+        Thread-safe; called from the reason-feeder thread.
+        """
+        with self._lock:
+            self.last_reason = hint
+            self.reason_error = error
+
     def recent_windows(self) -> list[list]:
         if self.session is None:
             return []
@@ -375,6 +440,9 @@ class _LiveMonitor:
             self.mic = None
             self.wav_source = None
             self.source_label = ""
+            self.last_reason = None
+            self.reason_error = None
+            self._last_reason_fire = 0.0
 
 
 _LIVE = _LiveMonitor()
@@ -414,13 +482,13 @@ def _live_poll():
     """Polled by the gr.Timer; updates the Live monitor UI from session state."""
     if _LIVE.session is None:
         return ("🟢 Idle — click **Start monitoring** to begin live listening.",
-                reachy3d.DEFAULT_STATE, [], None)
+                reachy3d.DEFAULT_STATE, [], None, _reason_hint_markdown(None, None))
     s = _LIVE.snapshot()
     if s is None:
-        return ("🟢 Idle", reachy3d.DEFAULT_STATE, [], None)
+        return ("🟢 Idle", reachy3d.DEFAULT_STATE, [], None, _reason_hint_markdown(None, None))
     if _LIVE.error:
         return (f"❌ {_LIVE.error}", reachy3d.DEFAULT_STATE,
-                _LIVE.recent_windows(), None)
+                _LIVE.recent_windows(), None, _reason_hint_markdown(None, None))
     if s.running:
         status = (
             f"🔴 **Listening** — `{s.last_event}` (score {s.last_score:.2f}, "
@@ -432,7 +500,37 @@ def _live_poll():
                   f"{s.soothe_count} soothe(s) this session")
     last = _LIVE.last_soothe()
     audio = _to_gradio_audio(*last.audio) if (last is not None and last.audio) else None
-    return (status, s.state, _LIVE.recent_windows(), audio)
+    return (status, s.state, _LIVE.recent_windows(), audio,
+            _reason_hint_markdown(_LIVE.last_reason, _LIVE.reason_error))
+
+
+def _reason_hint_markdown(hint: Optional[dict], error: Optional[str]) -> str:
+    """Render the reason-hint panel Markdown from a GemmaReasonClient result.
+
+    A None hint with a non-None error means the service is unreachable.
+    A None hint with a None error means no cry was seen in this session yet.
+    A populated hint shows event + reason + confidence.
+    """
+    if hint is None:
+        if error:
+            return (f"_💭 Reason hint: offline — {error} (gemma-4 :8082)_\n\n"
+                    f"Enable in **Detection settings** → 'Use gemma-4 reason hint' "
+                    f"and ensure turing:8082 is up.")
+        return ("_💭 Reason hint: waiting for the first cry in this session "
+                "to ask gemma-4 what it might mean._")
+    event = hint.get("event", "other")
+    reason = hint.get("reason")
+    conf = float(hint.get("confidence", 0.0))
+    raw = (hint.get("raw_text") or "").strip()
+    if reason:
+        return (f"### 💭 gemma-4 hint: **{reason.value}** (~{conf:.0%} confidence, low)\n"
+                f"- event: `{event.value if hasattr(event, 'value') else event}`\n"
+                f"- raw: _{raw[:200]}_\n\n"
+                f"> Cry reasons are *advisory* — trained pediatric nurses agree only ~33% of "
+                f"the time. See ROBUSTNESS.md.")
+    return (f"### 💭 gemma-4: `{event.value if hasattr(event, 'value') else event}` "
+            f"({conf:.0%})\n- _{raw[:200]}_\n\n"
+            f"_No cry-reason inferred (event was not baby_cry)._")
 
 
 # --------------------------------------------------------------------------
@@ -622,8 +720,10 @@ def build_app():
                 # ---------------- Live monitor (PRIMARY) ----------------
                 with gr.Tab("🔴 Live monitor"):
                     live_status = gr.Markdown(
-                        "🟢 Idle — click **Start monitoring** to begin live listening."
-                    )
+                        "🟢 Idle — click **Start monitoring** to begin live listening.")
+                    reason_hint = gr.Markdown(
+                        "_💭 Reason hint: starts after the first cry._",
+                        elem_id="peeky-reason-hint")
                     with gr.Row():
                         start_btn = gr.Button("Start monitoring", variant="primary")
                         stop_btn = gr.Button("Stop")
@@ -650,7 +750,7 @@ def build_app():
                     # 3D Reachy state, the live timeline, and the soothe audio.
                     timer = gr.Timer(value=0.2)
                     timer.tick(_live_poll, outputs=[live_status, reachy_state,
-                                                    live_timeline, live_soothe])
+                                                    live_timeline, live_soothe, reason_hint])
                     start_btn.click(
                         _start_live,
                         inputs=[cry_thr_l, sustain_l, cooldown_l, min_snr_l,

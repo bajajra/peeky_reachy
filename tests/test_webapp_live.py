@@ -191,11 +191,12 @@ def test_live_monitor_wav_source_keeps_replaying_when_loop_true(monkeypatch, tmp
 def test_live_poll_when_idle(monkeypatch):
     mic = _FakeMic(frames=0)
     _patch_live_monitor(monkeypatch, mic)
-    status, state, rows, audio = _live_poll()
+    status, state, rows, audio, reason_md = _live_poll()
     assert "🟢 Idle" in status
     assert state == "idle"
     assert rows == []
     assert audio is None
+    assert isinstance(reason_md, str) and "💭" in reason_md
 
 
 def test_live_poll_when_running(monkeypatch):
@@ -204,12 +205,13 @@ def test_live_poll_when_running(monkeypatch):
     cfg = Config.from_env()
     mon.start(cfg)
     time.sleep(0.1)  # let a few pipeline windows tick
-    status, state, rows, audio = _live_poll()
+    status, state, rows, audio, reason_md = _live_poll()
     mon.stop()
     assert "Listening" in status
     assert state in {"listening", "alert", "comfort", "idle"}
     # rows is a list (possibly empty depending on how fast the pipeline ticked)
     assert isinstance(rows, list)
+    assert isinstance(reason_md, str) and "💭" in reason_md
 
 
 # -------------------- build_app() structure (vision alignment) --------------------
@@ -334,3 +336,13 @@ def test_start_live_routes_wav_source(monkeypatch, tmp_path):
         assert fresh.wav_source is not None and fresh.mic is None
     finally:
         _stop_live()
+
+
+def test_start_live_wav_source_requires_file(monkeypatch):
+    mic = _FakeMic(frames=8)
+    fresh = _patch_live_monitor(monkeypatch, mic)
+    msg = _start_live(0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "",
+                      "wav", None, True)
+    assert "Pick a WAV file" in msg
+    assert fresh.session is None
+    assert mic._start_calls == 0
