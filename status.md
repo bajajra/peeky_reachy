@@ -3,6 +3,12 @@
 Ticket board for the Peeky baby/pet monitor build (see `PLAN.md` for the design,
 `ROBUSTNESS.md` for the classification-robustness strategy).
 
+**Tickets at a glance:** Complete: 25 · In progress: 5 · Not picked up: 0
+Next unowned work: none — all 30 tickets are either Complete or In progress.
+Active in-flight: **T26** (infra: turing cry on :8081, ufw still blocks), **T27**
+(ml: voice on spark :8081, gemma install green on turing, deploy pending),
+**T28** (LLM story/lullaby), **T29** (3D Reachy sidebar), **T30** (program-mgr audit).
+
 **Status legend:** `Not picked up` · `In progress` · `Complete`
 **Owner:** which session/agent handled the ticket.
 
@@ -33,14 +39,18 @@ Ticket board for the Peeky baby/pet monitor build (see `PLAN.md` for the design,
 | T22 | Robust mood/reason aggregation           | Complete | claude-main | `EpisodeReasonAggregator` |
 | T23 | Robustness strategy doc                  | Complete | claude-main | `ROBUSTNESS.md` |
 | T24 | Gradio v6 web app                         | Complete | claude-main | `webapp.py` (gradio 6.18); Monitor/Enroll/Preview/About |
+| T29 | 3D Reachy in Gradio left sidebar          | In progress | ai-engineer | pipeline-driven animation; three.js + Reachy Mini URDF (Apache-2.0 from `pollen-robotics/reachy-mini-desktop-app`); audio input only. Vendor assets to `assets/reachy_3d/`; small-talk repo is reference. |
+| T30 | Program manager: docs + ticket board      | In progress | program-manager | owns `status.md`, `standup.md`, `PLAN.md`, `ROBUSTNESS.md`. Read-only on code. Does NOT commit/push. First pass: audit board, archive >24h heartbeats, add "Tickets at a glance" summary, flag doc↔code drift. |
 | T25 | Remote cry-classification service (turing)| Complete | claude-main | `cry_service/` + `RemoteEventClassifier` + pipeline wiring |
 | T26 | Infra: manage turing + spark             | In progress | infra-engineer | spark READY (voice on :8081 by ml-engineer); turing BACK ONLINE (RTX 5090, 32 GB, x86_64, Ubuntu 26.04). **Cry service RUNNING on turing :8081** (user-mode systemd, numpy-heuristic, `/classify` returns baby_cry @ 0.96). **Blocker for LAN access: turing ufw blocks 8081 — user must `sudo ufw allow 8081/tcp`**. See `ops/infra.md` "Manual steps still required" #0 |
 | T27 | ML: manage model services                | In progress | ml-engineer | voice→spark DEPLOYED (:8081, VoxCPM2 ~5.5GB VRAM); cry→turing BLOCKED (host offline); runbook `ops/models.md`. NOTE: voxwrap bug flagged in standup |
 | T28 | LLM-powered bedtime story + lullaby gen  | In progress | ai-engineer-2 | `peeky_reachy/generate/` — Anthropic/Ollama/template fallback, voice-clone glue, Gradio tab factory |
 
 **Model-service allocation:** turing (192.168.1.220) = baby-cry classification
-(`cry_service/`, port 8080); spark (192.168.1.253) = VoxCPM2 voice clone
-(`gpu_service/`, port 8080). Enable remote cry with `PEEKY_USE_REMOTE_CRY=true`.
+(`cry_service/`, port **8081** — :8080 on turing is anuj's `llama-swap`, not
+ours); spark (192.168.1.253) = VoxCPM2 voice clone (`gpu_service/`, port
+**8081** — :8080 on spark is a pre-existing `nginx-llama-proxy`).
+Enable remote cry with `PEEKY_USE_REMOTE_CRY=true`.
 
 **Core tickets complete.** MVP runs e2e on the dev machine with numpy fallbacks
 (no robot/GPU); YAMNet/Silero/VoxCPM2 slot into the same seams. Gradio v6 UI

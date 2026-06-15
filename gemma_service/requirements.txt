@@ -1,0 +1,32 @@
+# Peeky gemma-4 reason service (runs on turing). The transformers stack
+# is large but covers both the multimodal target and the causal-LM drafter.
+#
+# Pinned versions (last verified 2026-06-15 against the live HF release of
+# google/gemma-4-E4B-it + the matching assistant drafter):
+#   - torch 2.5.x with CUDA 12.4-12.8 wheels (RTX 5090 needs ≥12.8 driver +
+#     ≥12.8 torch wheel; 2.5.1+cu128 works)
+#   - transformers 4.49+ (gemma-4 model class landed here)
+#   - accelerate 1.x for device_map="auto" if we ever shard across GPUs
+#
+# Adjust if gemma-4 multimodal support is gated to a newer transformers
+# release — check the model card before bumping.
+
+# --- Web layer (matches cry_service / gpu_service) ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.0
+
+# --- Audio I/O (server only decodes base64 WAV; numpy is enough) ---
+numpy>=1.24
+
+# --- Model + tokenizer + chat template ---
+# CUDA 12.8 wheel for RTX 5090. Use the cu128 index on hosts that have the
+# matching driver; fall back to cu124 wheels on older boxes.
+torch>=2.5.1
+transformers>=4.49
+accelerate>=1.0
+safetensors>=0.4
+sentencepiece>=0.2
+# audio feature extraction (gemma-4 uses HF's AudioProcessor; needs
+# soundfile under the hood for the mel-spectrogram)
+soundfile>=0.12

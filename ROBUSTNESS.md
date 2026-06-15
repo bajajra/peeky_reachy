@@ -89,3 +89,15 @@ ensemble/aggregator are implemented with numpy fallbacks and covered by tests
 `test_reason.py`, `test_pipeline.py`). YAMNet/CLAP/Silero and a HF cry-reason
 model slot into the same seams via the `make_*` factories without pipeline
 changes. DoA gating and the feedback loop are roadmap.
+
+## Real-model benchmark (donateacry)
+The abstain thresholds in layers 3, 5, and 7 were tuned against the
+**donateacry** corpus with real models plugged in (numpy heuristic +
+YAMNet + the HF cry-reason model, plus a gemma-4 LLM reason hint
+where applicable). Results live at
+[`benchmarks/results/donateacry_real_models.json`](benchmarks/results/donateacry_real_models.json);
+the corpus itself is at `benchmarks/donateacry-corpus/`. The benchmark
+measures precision @ fixed low false-alarm rate (the metric that matters for
+a baby device) on held-out home-style clips — see
+"Evaluate the right metric" above. Re-run when changing the ensemble
+composition or the abstain thresholds.

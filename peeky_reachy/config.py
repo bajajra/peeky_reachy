@@ -59,6 +59,12 @@ class Config:
     voice_clone_timeout_s: float = 20.0
     enrollment_dir: str = "enrollment"
 
+    # Gemma-4 reason service (ml-engineer T27 pt 2). Frozen 2026-06-15.
+    # :8082 on turing — distinct from cry (:8081) and anuj's llama-swap (:8080).
+    use_remote_gemma: bool = False
+    gemma_reason_url: str = "http://192.168.1.220:8082"
+    gemma_timeout_s: float = 10.0
+
     # Soothing
     assets_dir: str = "assets/soothing"
     language: str = "en"

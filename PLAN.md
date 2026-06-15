@@ -66,6 +66,17 @@ Key abstractions:
   *(OpenVoice v2, MIT/~2–3 GB, is the lighter fallback if VRAM is tight.)*
 - *(Optional, flagged off by default)* a Dunstan/`donateacry` cry-reason model
   from HF for the weak reason hint.
+- **LLM reason hints via gemma-4** (`gemma_service/` on turing:8082, FastAPI
+  `/healthz` + `/reason`; lazy-loaded via `transformers` with a drafter for
+  speculative decoding). Optional pipeline stage; falls back to the local
+  heuristic on any 4xx/5xx/network failure. Pair with `RemoteEventClassifier`
+  on turing:8081 (cry) and `VoiceCloneClient` → spark:8081 (VoxCPM2) for the
+  full LAN deployment. See `ops/infra.md` + `ops/models.md` for the host
+  topology, port map, and systemd units.
+- **Robustness benchmark (donateacry).** Real-model eval output lives at
+  `benchmarks/results/donateacry_real_models.json`; corpus at
+  `benchmarks/donateacry-corpus/`. Used to tune the ensemble/abstain layer's
+  confidence thresholds, not as the production model itself.
 
 ## Repo layout (greenfield — dir is empty)
 ```
