@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Environment / secrets
+.env
+.env.*
+*.key
+secrets/
+
+# Caregiver voice enrollment data (sensitive — never commit)
+enrollment/
+voice_samples/
+*.wav.enc
+
+# Model weights / caches
+models/
+*.ckpt
+*.safetensors
+*.onnx
+
+# Audio scratch / generated output
+output/
+cache/
+*.tmp.wav
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+logs/
