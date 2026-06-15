@@ -1,0 +1,18 @@
+# Pinned deps for the Peeky cry-classification service (turing, 192.168.1.220).
+# Reproducible install target. Install order:
+#   pip install -e ".[ml]"                      # brings peeky_reachy + classifier
+#   pip install -r ops/requirements.cry.lock.txt
+#   pip install "tensorflow==2.16.2" "tensorflow-hub==0.16.1"   # YAMNet (optional)
+#
+# YAMNet runs CPU-fine; GPU optional. Without tensorflow the service still serves
+# on the numpy-heuristic fallback (model_loaded=false). Pin TF to a version with
+# a wheel for the box's Python/arch; on turing's exact Python re-resolve if 2.16.2
+# has no wheel and record the chosen version here.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+numpy==1.26.4
+pydantic==2.10.4
+
+# --- YAMNet path (install separately; large) ---
+# tensorflow==2.16.2
+# tensorflow-hub==0.16.1

@@ -1,0 +1,40 @@
+# systemd unit for the Peeky cry-classification service on turing (192.168.1.220).
+#
+# Port: **8081** (host :8080 is already taken by anuj's pre-existing
+# `llama-swap` — see `ops/infra.md` "turing host audit". To move cry to :8080
+# instead, free the port first per the "Kill llama-swap + redeploy on :8080"
+# section in `ops/infra.md`.)
+#
+# Production install (multi-user.target, requires sudo):
+#   sudo cp ops/peeky-cry.service /etc/systemd/system/peeky-cry.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now peeky-cry
+#   journalctl -u peeky-cry -f
+#
+# No-sudo install (user-mode, recommended when you don't have sudo / don't
+# want to disturb the system). See `ops/peeky-cry-turing.service` for the
+# user-mode variant; the install steps are in that file's header.
+#
+# Assumes the repo at /home/bajajra/workspace/peeky_reachy with a venv at
+# .venv-cry that has: `pip install -e ".[ml]" -r cry_service/requirements.txt`
+# (+ tensorflow/tensorflow-hub for the real YAMNet path — optional, the
+# service runs on the numpy-heuristic fallback without them).
+[Unit]
+Description=Peeky cry-classification service (YAMNet) — turing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bajajra
+WorkingDirectory=/home/bajajra/workspace/peeky_reachy
+Environment=PEEKY_CRY_PREFER_ML=1
+Environment=PEEKY_EAGER_LOAD=1
+Environment=PEEKY_LOG_LEVEL=INFO
+ExecStart=/home/bajajra/workspace/peeky_reachy/.venv-cry/bin/uvicorn cry_service.server:app --host 0.0.0.0 --port 8081
+Restart=on-failure
+RestartSec=5
+# YAMNet downloads from TF-Hub on first load; allow time.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

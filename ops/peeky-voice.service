@@ -1,0 +1,30 @@
+# systemd unit for the Peeky VoxCPM2 voice-clone service on spark (192.168.1.253).
+# Install (run by infra-engineer / user — needs root):
+#   sudo cp ops/peeky-voice.service /etc/systemd/system/peeky-voice.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now peeky-voice
+#
+# NOTE: binds host port 8081 because 8080 on spark is already held by the
+# pre-existing `nginx-llama-proxy` container. The Peeky client default is
+# :8080 -> point PEEKY_VOICE_CLONE_URL at :8081, OR have infra free 8080 /
+# add an nginx upstream  proxying 8080 -> 127.0.0.1:8081 and revert this to 8080.
+[Unit]
+Description=Peeky VoxCPM2 voice-clone service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bajajra
+WorkingDirectory=/home/bajajra/workspace/peeky_reachy
+Environment=PEEKY_REFERENCES_DIR=/home/bajajra/peeky-enrollment
+Environment=PEEKY_EAGER_LOAD=1
+Environment=VOXCPM_MODEL=openbmb/VoxCPM2
+Environment=PEEKY_LOG_LEVEL=INFO
+ExecStart=/home/bajajra/workspace/peeky_reachy/.venv-gpu/bin/uvicorn gpu_service.server:app --host 0.0.0.0 --port 8081
+Restart=on-failure
+RestartSec=5
+# VoxCPM2 needs the GPU; give it time to load weights on first boot.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target
