@@ -55,29 +55,101 @@ def test_to_gradio_audio_clips_and_int16():
     assert pcm[0] == 32767 and pcm[1] == -32767
 
 
+# -------------------- _to_float_mono: every shape Gradio 6 may hand us --------------------
+
+
+def test_to_float_mono_handles_bare_ndarray():
+    """Gradio 6 sometimes hands us a bare ndarray; assume 16 kHz default."""
+    arr = np.zeros(8000, dtype=np.float32)
+    samples, sr = _to_float_mono(arr)
+    assert sr == 16000
+    assert samples.shape == (8000,)
+    assert samples.dtype == np.float32
+
+
+def test_to_float_mono_handles_file_dict(tmp_path):
+    """A Gradio 6 FileData-shaped dict must round-trip through the loader."""
+    import soundfile as sf
+    wav = tmp_path / "x.wav"
+    sf.write(str(wav), np.zeros(8000, dtype=np.float32), 16000)
+    payload = {"path": str(wav), "data": None, "orig_name": "x.wav",
+               "mime_type": "audio/wav"}
+    samples, sr = _to_float_mono(payload)
+    assert sr == 16000
+    assert samples.shape == (8000,)
+
+
+def test_to_float_mono_handles_path_string(tmp_path):
+    """A path string (e.g. from a typed-filepath component) must load."""
+    import soundfile as sf
+    wav = tmp_path / "x.wav"
+    sf.write(str(wav), np.zeros(8000, dtype=np.float32), 16000)
+    samples, sr = _to_float_mono(str(wav))
+    assert sr == 16000
+    assert samples.shape == (8000,)
+
+
+def test_to_float_mono_unreadable_path_returns_none():
+    samples, sr = _to_float_mono("/no/such/file.wav")
+    assert samples is None and sr == 16000
+
+
+def test_enroll_handles_file_dict_payload(tmp_path):
+    """End-to-end: enroll must succeed with a Gradio 6 FileData-shaped dict.
+
+    Regression for the user-reported 'uploading the voice for cloning gave
+    an error' bug — Gradio 6.18 may pass a dict for the upload, and the
+    pre-fix _to_float_mono crashed on `sr, data = audio`.
+    """
+    import soundfile as sf
+    wav = tmp_path / "voice.wav"
+    sf.write(str(wav), 0.05 * np.random.default_rng(0).standard_normal(16000 * 3).astype(np.float32), 16000)
+    payload = {"path": str(wav), "data": None, "orig_name": "voice.wav",
+               "mime_type": "audio/wav"}
+    status, rows = enroll(payload, name="Bug Mom", transcript="hush now little one",
+                          language="en", consent=True)
+    assert "✅" in status, status
+    # enrolled row appears in the table
+    assert any(r[0] == "bug-mom" for r in rows), rows
+
+
+def test_enroll_handles_bare_ndarray_payload():
+    arr = 0.05 * np.random.default_rng(1).standard_normal(16000 * 3).astype(np.float32)
+    status, _ = enroll(arr, name="BareNumpy", transcript="hush now little one",
+                       language="en", consent=True)
+    assert "✅" in status, status
+
+
+def test_enroll_no_audio_returns_clear_message():
+    status, _ = enroll(None, name="NoAudio", transcript="hush now little one",
+                       language="en", consent=True)
+    assert "record or upload" in status.lower(), status
+
+
 # -------------------- analyze edge cases --------------------
 
 
 def test_analyze_empty_audio_returns_friendly_message():
-    summary, out_audio, rows, plot = analyze(None, 0.55, 3.0, 30.0, 3.0, 5, 0.5,
-                                              False, False, "")
+    summary, out_audio, rows, plot, state = analyze(None, 0.55, 3.0, 30.0, 3.0, 5, 0.5,
+                                                     False, False, "")
     assert "Please record or upload" in summary
     assert out_audio is None
     assert rows == []
     assert plot is None
+    assert state == "idle"
 
 
 def test_analyze_zero_length_array_returns_friendly_message():
-    summary, _, _, _ = analyze((SR, np.zeros(0, dtype=np.int16)),
-                                0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "")
+    summary, _, _, _, _ = analyze((SR, np.zeros(0, dtype=np.int16)),
+                                   0.55, 3.0, 30.0, 3.0, 5, 0.5, False, False, "")
     assert "Please record or upload" in summary
 
 
 def test_analyze_very_short_clip_does_not_crash():
     # Way too short to ever calibrate or sustain.
     short = (0.1 * np.random.randn(int(0.2 * SR))).astype(np.float32)
-    summary, _, rows, _ = analyze(_audio(short), 0.55, 3.0, 30.0, 3.0, 5, 0.5,
-                                   False, False, "")
+    summary, _, rows, _, _ = analyze(_audio(short), 0.55, 3.0, 30.0, 3.0, 5, 0.5,
+                                      False, False, "")
     # 0 windows is fine; just don't crash and report "no soothe".
     assert "No soothing triggered" in summary or "Soothing triggered" in summary
     assert isinstance(rows, list)
@@ -207,8 +279,8 @@ def test_analyze_with_use_voice_uses_clone(monkeypatch, tmp_path):
 
     _patch_voice_transport(monkeypatch, handler)
     clip = np.concatenate([silence(2.5), baby_cry(5.0)])
-    summary, soothe_audio, _, _ = analyze(_audio(clip), 0.55, 3.0, 30.0, 3.0, 5, 0.5,
-                                           False, True, "http://fake-spark:8090")
+    summary, soothe_audio, _, _, _ = analyze(_audio(clip), 0.55, 3.0, 30.0, 3.0, 5, 0.5,
+                                              False, True, "http://fake-spark:8090")
     assert "Soothing triggered" in summary
     assert "caregiver clone" in summary
     assert soothe_audio is not None

@@ -44,9 +44,43 @@ SAFETY = (
 
 
 def _to_float_mono(audio) -> tuple[Optional[np.ndarray], int]:
+    """Normalize whatever Gradio 6.18 hands us for a ``gr.Audio`` component
+    into ``(mono_float32_samples, sample_rate)``.
+
+    Gradio's contract is ``(sample_rate, np.ndarray)`` for ``type="numpy"``,
+    but in practice we also see (a) a bare ndarray, (b) a ``FileData``-shaped
+    dict with a ``path`` key, (c) a path string, and (d) ``None``. We handle
+    each so the user gets a clear "please record or upload" message rather
+    than a cryptic unpack error from the enroll/analyze callbacks.
+    """
     if audio is None:
         return None, 16000
-    sr, data = audio
+    # (a) tuple/list of two: (sr, data)
+    if isinstance(audio, (tuple, list)) and len(audio) == 2:
+        sr, data = audio
+        data = np.asarray(data)
+    # (b) FileData-shaped dict (Gradio 6 may pass a dict for an upload)
+    elif isinstance(audio, dict):
+        path = audio.get("path")
+        if not path:
+            return None, 16000
+        try:
+            import soundfile as sf
+            data, sr = sf.read(str(path), dtype="float32", always_2d=False)
+        except Exception:
+            return None, 16000
+    # (c) path string
+    elif isinstance(audio, (str, Path)):
+        try:
+            import soundfile as sf
+            data, sr = sf.read(str(audio), dtype="float32", always_2d=False)
+        except Exception:
+            return None, 16000
+    # (d) bare ndarray — assume 16 kHz (matches the pipeline default)
+    elif isinstance(audio, np.ndarray):
+        data, sr = audio, 16000
+    else:
+        return None, 16000
     data = np.asarray(data)
     if np.issubdtype(data.dtype, np.integer):
         data = data.astype(np.float32) / float(np.iinfo(data.dtype).max)
@@ -411,7 +445,8 @@ def enroll(audio, name, transcript, language, consent):
         return f"Consent required to enroll a voice.\n\n{CONSENT_TEXT}", _enrolled_rows()
     samples, sr = _to_float_mono(audio)
     if samples is None or len(samples) == 0:
-        return "Please record or upload a voice sample.", _enrolled_rows()
+        return ("Please record or upload a voice sample (WAV/MP3/OGG), then "
+                "click **Enroll voice**."), _enrolled_rows()
     if not (name and transcript.strip()):
         return "Name and an exact transcript of the sample are both required.", _enrolled_rows()
     cfg = Config.from_env()
@@ -419,8 +454,14 @@ def enroll(audio, name, transcript, language, consent):
     try:
         rec = enroll_from_array(store, audio=samples, sample_rate=sr, display_name=name,
                                 transcript=transcript, language=language, consent_given=True)
+    except PermissionError as exc:
+        return f"Consent required: {exc}", _enrolled_rows()
     except Exception as exc:
-        return f"Enrollment failed: {exc}", _enrolled_rows()
+        log.exception("enrollment failed")
+        return (f"❌ Enrollment failed: {type(exc).__name__}: {exc}\n\n"
+                f"Try a 5–10 s WAV/MP3 sample, double-check the name and "
+                f"transcript, and make sure the enrollment dir is writable "
+                f"(`{cfg.enrollment_dir}`)."), _enrolled_rows()
     return f"✅ Enrolled **{rec.display_name}** as `{rec.speaker_id}`.", _enrolled_rows()
 
 
