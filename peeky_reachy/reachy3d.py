@@ -440,7 +440,7 @@ def head_html(states: Optional[dict] = None,
     cfg = states if states is not None else load_states()
     mode = loader_mode if loader_mode is not None else LOADER_MODE
     url = urdf_url if urdf_url is not None else (
-        f"/file=assets/reachy_mini/reachy_mini.urdf" if mode == "urdf" else ""
+        "/gradio_api/file=assets/reachy_mini/reachy_mini.urdf" if mode == "urdf" else ""
     )
     scene = (
         _SCENE_JS

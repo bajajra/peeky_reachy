@@ -140,6 +140,13 @@ def test_head_html_default_uses_urdf_loader():
     html = reachy3d.head_html()
     assert "urdf-loader" in html, "head_html must reference the urdf-loader CDN"
     assert "reachy_mini.urdf" in html, "head_html must point at the vendored URDF"
+    # Gradio 6's static-file route is /gradio_api/file=<path>; the loader
+    # must fetch the URDF from this route (the dev server is configured with
+    # `allowed_paths=[<repo>/assets]`).
+    assert "gradio_api/file=" in html, (
+        "head_html must point at /gradio_api/file=... so the URDF resolves "
+        "under Gradio 6's static-file route"
+    )
     # Loader mode is embedded in the scene script as a JSON string
     assert '"urdf"' in html or "'urdf'" in html
 
