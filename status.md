@@ -3,11 +3,13 @@
 Ticket board for the Peeky baby/pet monitor build (see `PLAN.md` for the design,
 `ROBUSTNESS.md` for the classification-robustness strategy).
 
-**Tickets at a glance:** Complete: 25 · In progress: 6 · Not picked up: 0
-Next unowned work: none — all 31 tickets are either Complete or In progress.
+**Tickets at a glance:** Complete: 28 · In progress: 6 · Not picked up: 0
+Next unowned work: none — all 34 tickets are either Complete or In progress.
 Active in-flight: **T26** (infra: turing cry on :8081, ufw still blocks), **T27**
 (ml: voice on spark :8081, gemma install green on turing, deploy pending),
-**T28** (LLM story/lullaby), **T29** (3D Reachy sidebar), **T30** (program-mgr audit).
+**T28** (LLM story/lullaby), **T30** (program-mgr audit),
+**T31** (Gradio caregiver voice enrollment — blocked on in-process backend),
+**T38** (gemma-4 on turing :8082 — ufw still blocks, ml-engineer awaiting user signoff).
 
 **Status legend:** `Not picked up` · `In progress` · `Complete`
 **Owner:** which session/agent handled the ticket.
@@ -39,7 +41,7 @@ Active in-flight: **T26** (infra: turing cry on :8081, ufw still blocks), **T27*
 | T22 | Robust mood/reason aggregation           | Complete | claude-main | `EpisodeReasonAggregator` |
 | T23 | Robustness strategy doc                  | Complete | claude-main | `ROBUSTNESS.md` |
 | T24 | Gradio v6 web app                         | Complete | claude-main | `webapp.py` (gradio 6.18); Monitor/Enroll/Preview/About |
-| T29 | 3D Reachy in Gradio left sidebar          | Complete | claude-main | Fixed-width left sidebar with a procedural three.js Reachy (`peeky_reachy/reachy3d.py` + `assets/reachy_3d/{states.json,ATTRIBUTION.md}`); `analyze()` maps pipeline run→state, hidden `gr.Textbox` + 200 ms JS poll → `window.peekyReachy.setState` (idle/listening/alert/comfort). `tests/test_webapp_3d.py` (12). Suite **184 passed**. Live on dev Mac http://127.0.0.1:7860. Procedural geometry instead of vendored URDF meshes — see ATTRIBUTION.md. |
+| T29 | 3D Reachy in Gradio left sidebar          | Complete | claude-main | Fixed-width left sidebar with the real Reachy Mini (vendored Apache-2.0 URDF + 41 STL meshes from `pollen-robotics/reachy-mini-desktop-app`, loaded via `urdf-loader` CDN at runtime in `peeky_reachy/reachy3d.py`); `analyze()` maps pipeline run→state, hidden `gr.Textbox` + 200 ms JS poll → `window.peekyReachy.setState` (idle/listening/alert/comfort). State→pose table drives URDF joints `head_frame`/`yaw_body`/`left_antenna`/`right_antenna`. Procedural fallback for offline asset hosts. `tests/test_reachy3d_urdf.py` (15) + `tests/test_webapp_3d.py` (12). Suite **238 passed**. Live on dev Mac http://127.0.0.1:7860. See `assets/reachy_3d/ATTRIBUTION.md`. |
 | T30 | Program manager: docs + ticket board      | In progress | program-manager | owns `status.md`, `standup.md`, `PLAN.md`, `ROBUSTNESS.md`. Read-only on code. Does NOT commit/push. First pass: audit board, archive >24h heartbeats, add "Tickets at a glance" summary, flag doc↔code drift. |
 | T31 | Gradio caregiver voice enrollment (priority) | In progress | ai-engineer | voice-from-mic as primary path; move Enroll tab to position #1; "Test this voice" button calls `VoiceCloneClient.synthesize`; end-to-end test in `test_webapp_enroll.py`. **BLOCKED**: ai-engineer is `backendType: in-process` (not a persistent tmux teammate) — messages sit in inbox until team-lead spawns them. |
 | T32 | Fix voxwrap + re-deploy voice on spark (priority) | In progress | ml-engineer | `gpu_service/voxwrap.py` calls a non-existent method (voxcpm 2.0.3 API mismatch, /synthesize returns 503). Confirm real API, update wrapper + tests, pkill old uvicorn, git pull, relaunch on :8081, /synthesize smoke test → `/tmp/peeky-synth.wav`. |
@@ -48,7 +50,7 @@ Active in-flight: **T26** (infra: turing cry on :8081, ufw still blocks), **T27*
 | T26 | Infra: manage turing + spark             | In progress | infra-engineer | spark READY (voice on :8081 by ml-engineer); turing BACK ONLINE (RTX 5090, 32 GB, x86_64, Ubuntu 26.04). **Cry service RUNNING on turing :8081** (user-mode systemd) — now on **owlgebra-ai/babycry** (`PEEKY_CRY_MODEL=owlgebra`, `model_loaded:true`); `/classify` real cry → `baby_cry` 0.79, silence → `other`. **Blocker for LAN access: turing ufw blocks 8081 — user must `sudo ufw allow 8081/tcp`**. See `ops/infra.md` "Manual steps still required" #0 |
 | T27 | ML: manage model services                | In progress | ml-engineer | voice→spark DEPLOYED (:8081, VoxCPM2 ~5.5GB VRAM); cry→turing BLOCKED (host offline); runbook `ops/models.md`. NOTE: voxwrap bug flagged in standup |
 | T28 | LLM-powered bedtime story + lullaby gen  | In progress | ai-engineer-2 | `peeky_reachy/generate/` — Anthropic/Ollama/template fallback, voice-clone glue, Gradio tab factory |
-| T34 | Autonomous live-streaming soothing mode  | Complete    | claude-main  | Per `vision.md`: pivot Gradio app from "upload + Analyze clip" to **live monitor as primary**. New `peeky_reachy/streaming.py` `StreamingSession` (thread-safe in-memory frame buffer + Pipeline worker + explicit sound-type→action map). Rewrote `webapp.py`: `🔴 Live monitor` tab is now Tab #1 with Start/Stop, live status Markdown, rolling 50-window timeline Dataframe, soothe Audio, gr.Timer(0.2) poll driving both the status and the existing 3D Reachy `reachy_state` textbox. Old upload-analyze flow demoted to "🛠 Debug / Analyze clip". New `tests/test_webapp_live.py` (13) covers `_LiveMonitor` lifecycle with a mocked `LocalAudioIO`, poll shape, and the `build_app()` vision-alignment structure (Live monitor is the first tab, has Start/Stop but no Analyze, drives the 3D state bridge). Suite **206 passed**. Lead taking this (ai-engineer is in-process, not running). |
+| T34 | Autonomous live-streaming soothing mode  | Complete    | claude-main  | Per `vision.md`: pivot Gradio app from "upload + Analyze clip" to **live monitor as primary**. New `peeky_reachy/streaming.py` `StreamingSession` (thread-safe in-memory frame buffer + Pipeline worker + explicit sound-type→action map). Rewrote `webapp.py`: `🔴 Live monitor` tab is now Tab #1 with Start/Stop, live status Markdown, rolling 50-window timeline Dataframe, soothe Audio, gr.Timer(0.2) poll driving both the status and the existing 3D Reachy `reachy_state` textbox. Old upload-analyze flow demoted to "🛠 Debug / Analyze clip". New `tests/test_webapp_live.py` (17) covers `_LiveMonitor` lifecycle with a mocked `LocalAudioIO`, poll shape, and the `build_app()` vision-alignment structure (Live monitor is the first tab, has Start/Stop but no Analyze, drives the 3D state bridge). Suite **238 passed**. Lead taking this (ai-engineer is in-process, not running). |
 
 **Model-service allocation:** turing (192.168.1.220) = baby-cry classification
 (`cry_service/`, port **8081** — :8080 on turing is anuj's `llama-swap`, not
