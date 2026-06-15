@@ -1,0 +1,11 @@
+# Hugging Face Space runtime dependencies for Peeky.
+# Keep this minimal: the Space is a Gradio client. Heavy ML (VoxCPM2,
+# gemma-4, owlgebra-ai/babycry) lives on the user's LAN boxes (turing
+# / spark) and is reached over HTTPS via PEEKY_* secrets.
+#
+# Pin major versions to avoid surprise breaks when the Space re-builds.
+gradio>=6.18,<7
+numpy>=1.24
+soundfile>=0.12
+httpx>=0.27
+pandas>=2.0
