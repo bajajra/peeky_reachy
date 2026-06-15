@@ -1,0 +1,7 @@
+# Pinned loosely. voxcpm is the only model-specific dep; torch is whatever
+# voxcpm wants on the GPU box.
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+numpy>=1.24
+voxcpm>=0.1

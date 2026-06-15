@@ -1,0 +1,10 @@
+# Cry-classification service (turing). Install the package too:
+#   pip install -e ".[ml]"        # from the repo root, brings the classifier
+# YAMNet path additionally needs:
+#   tensorflow>=2.13
+#   tensorflow-hub>=0.15
+# Without TF the service still runs on the numpy-heuristic fallback.
+fastapi>=0.110
+uvicorn[standard]>=0.29
+numpy>=1.24
+pydantic>=2.0

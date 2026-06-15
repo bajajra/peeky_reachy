@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peeky-reachy"
+version = "0.1.0"
+description = "Peeky — an AI baby/pet monitor and soothing companion built on Reachy Mini"
+readme = "PLAN.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# Live laptop audio + soothing playback on the dev machine
+audio = [
+    "sounddevice>=0.4",
+    "soundfile>=0.12",
+]
+# Voice-clone client + GPU service contract
+voice = [
+    "httpx>=0.27",
+]
+# Gradio web UI
+web = [
+    "gradio>=6,<7",
+    "soundfile>=0.12",
+    "pandas>=2.0",
+]
+# Robot (simulation or hardware) via the Reachy Mini SDK
+robot = [
+    "reachy-mini[mujoco]",
+]
+# Heavier ML detectors (optional; numpy fallbacks exist without these)
+ml = [
+    "silero-vad>=5.0",
+    "onnxruntime>=1.16",
+]
+dev = [
+    "pytest>=8.0",
+    "soundfile>=0.12",
+    "httpx>=0.27",
+]
+
+[project.scripts]
+peeky = "peeky_reachy.cli:main"
+peeky-demo = "peeky_reachy.cli:demo_main"
+peeky-enroll = "peeky_reachy.cli:enroll_main"
+peeky-web = "peeky_reachy.webapp:main"
+
+# Discovered by the Reachy Mini daemon/dashboard
+[project.entry-points."reachy_mini_apps"]
+peeky = "peeky_reachy.app:PeekyApp"
+
+[tool.setuptools.packages.find]
+include = ["peeky_reachy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]

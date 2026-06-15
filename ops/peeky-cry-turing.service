@@ -1,0 +1,40 @@
+# systemd USER unit for the Peeky cry-classification service on turing
+# (192.168.1.220). Lives in the user's systemd --user instance; no sudo
+# required to install.
+#
+# Install (run as the user, on turing):
+#   mkdir -p ~/.config/systemd/user
+#   cp ops/peeky-cry-turing.service ~/.config/systemd/user/peeky-cry.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now peeky-cry
+#   systemctl --user status peeky-cry
+#   journalctl --user -u peeky-cry -f
+#
+# Port: 8081. Host :8080 is taken by anuj's pre-existing llama-swap
+# (PID 7105) — see ops/infra.md "turing host audit". Using :8081 is a
+# non-disruptive choice; to free :8080 see the "Kill llama-swap + redeploy
+# on :8080" section in ops/infra.md.
+#
+# Linger: this user has Linger=no on turing, so this unit will stop when
+# the last user session logs out. For boot-time auto-start, run
+# `sudo loginctl enable-linger bajajra` once (requires sudo).
+[Unit]
+Description=Peeky cry-classification service (YAMNet) — turing
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/bajajra/workspace/peeky_reachy
+Environment=PEEKY_CRY_PREFER_ML=1
+Environment=PEEKY_EAGER_LOAD=1
+Environment=PEEKY_LOG_LEVEL=INFO
+# Use the venv interpreter; uvicorn and all deps live there.
+ExecStart=/home/bajajra/workspace/peeky_reachy/.venv-cry/bin/uvicorn cry_service.server:app --host 0.0.0.0 --port 8081
+Restart=on-failure
+RestartSec=5
+# YAMNet downloads from TF-Hub on first load; allow time.
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

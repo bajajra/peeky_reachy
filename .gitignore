@@ -46,3 +46,14 @@ cache/
 # Logs
 *.log
 logs/
+
+# Claude Code session state (local to this machine)
+.claude/
+
+# Local venvs
+venv-cry/
+.venv-*/
+
+# Benchmark data (download separately; see benchmarks/README.md)
+benchmarks/donateacry-corpus/
+benchmarks/results/
